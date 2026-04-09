@@ -848,9 +848,9 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       if (payload.error) throw new Error(payload.error.message);
       return payload;
     },
-    onSuccess: () => {
-      invalidateStashAndCheckout();
-      toast.success("Stashed changes restored");
+    onSuccess: async () => {
+      await invalidateStashAndCheckout();
+      toast.show("Stashed changes restored");
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to restore stash");
@@ -864,9 +864,9 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       if (payload.error) throw new Error(payload.error.message);
       return payload;
     },
-    onSuccess: () => {
-      invalidateStashAndCheckout();
-      toast.success("Stash discarded");
+    onSuccess: async () => {
+      await invalidateStashAndCheckout();
+      toast.show("Stash discarded");
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to discard stash");
@@ -961,7 +961,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                 if (popPayload.error) {
                   toast.error(popPayload.error.message);
                 } else {
-                  toast.success("Stashed changes restored");
+                  toast.show("Stashed changes restored");
                 }
                 await invalidateStashAndCheckout();
               }
