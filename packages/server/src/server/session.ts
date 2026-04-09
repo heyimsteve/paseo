@@ -4456,6 +4456,10 @@ export class Session {
       await this.checkoutExistingBranch(cwd, branch);
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
 
+      // Push a workspace_update immediately so the sidebar/header reflect
+      // the new branch name without waiting for the background git watcher.
+      await this.emitWorkspaceUpdateForCwd(cwd);
+
       this.emit({
         type: "checkout_switch_branch_response",
         payload: {
