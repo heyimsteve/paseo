@@ -4580,9 +4580,10 @@ export class Session {
         const indexMatch = refPart.match(/\{(\d+)\}/);
         if (!indexMatch) continue;
         const index = Number(indexMatch[1]);
-        const isPaseo = subject.startsWith(Session.PASEO_STASH_PREFIX);
+        const prefixIdx = subject.indexOf(Session.PASEO_STASH_PREFIX);
+        const isPaseo = prefixIdx >= 0;
         const branch = isPaseo
-          ? subject.slice(Session.PASEO_STASH_PREFIX.length).trim() || null
+          ? subject.slice(prefixIdx + Session.PASEO_STASH_PREFIX.length).trim() || null
           : null;
 
         if (paseoOnly && !isPaseo) continue;
