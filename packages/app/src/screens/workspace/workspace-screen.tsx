@@ -767,8 +767,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   const [branchSearchQuery, setBranchSearchQuery] = useState("");
   const [debouncedBranchSearchQuery, setDebouncedBranchSearchQuery] = useState("");
   const branchSwitcherAnchorRef = useRef<View>(null);
-  const hasUncommittedChanges = checkoutQuery.data?.isGit ? checkoutQuery.data.isDirty : false;
-
   useEffect(() => {
     const trimmed = branchSearchQuery.trim();
     const timer = setTimeout(() => setDebouncedBranchSearchQuery(trimmed), 180);
@@ -895,91 +893,88 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
 
   // ---- Branch switch with stash-awareness ----
 
-  const switchBranchMutation = useMutation({
-    mutationFn: async (branch: string) => {
-      if (!client) throw new Error("Daemon client unavailable");
-      const payload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branch);
-      if (payload.error) throw new Error(payload.error.message);
-      return payload;
-    },
-    onSuccess: (_data, branch) => {
-      // After switching, refresh queries then check if the target branch has a Paseo stash
-      void (async () => {
-        await invalidateStashAndCheckout();
-        try {
-          if (!client) return;
-          const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
-          const targetStash = stashPayload.entries.find((e) => e.branch === branch);
-          if (targetStash) {
-            const shouldRestore = await confirmDialog({
-              title: "Restore stashed changes?",
-              message: `This branch has stashed changes from a previous session. Would you like to restore them?`,
-              confirmLabel: "Restore",
-              cancelLabel: "Later",
-            });
-            if (shouldRestore) {
-              const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
-              if (popPayload.error) {
-                toast.error(popPayload.error.message);
-              } else {
-                toast.success("Stashed changes restored");
-              }
-              await invalidateStashAndCheckout();
-            }
-          }
-        } catch {
-          // Non-critical — the user can still restore manually
+  const stashAndSwitch = useCallback(
+    async (branchId: string) => {
+      if (!client) return;
+      const shouldStash = await confirmDialog({
+        title: "Uncommitted changes",
+        message:
+          "You have uncommitted changes. Stash them before switching branches?",
+        confirmLabel: "Stash & Switch",
+        cancelLabel: "Cancel",
+      });
+      if (!shouldStash) return;
+
+      try {
+        const stashPayload = await client.stashSave(normalizedWorkspaceId, {
+          branch: currentBranchName ?? undefined,
+        });
+        if (stashPayload.error) {
+          toast.error(stashPayload.error.message);
+          return;
         }
-      })();
+        await invalidateStashAndCheckout();
+        const switchPayload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branchId);
+        if (switchPayload.error) {
+          toast.error(switchPayload.error.message);
+          return;
+        }
+        await invalidateStashAndCheckout();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to stash changes");
+      }
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to switch branch");
-    },
-  });
+    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, toast],
+  );
 
   const handleBranchSelect = useCallback(
     (branchId: string) => {
       if (branchId === currentBranchName) return;
 
-      if (hasUncommittedChanges) {
-        void (async () => {
-          const shouldStash = await confirmDialog({
-            title: "Uncommitted changes",
-            message:
-              "You have uncommitted changes. Stash them before switching branches?",
-            confirmLabel: "Stash & Switch",
-            cancelLabel: "Cancel",
-          });
-          if (!shouldStash || !client) return;
-
-          try {
-            const stashPayload = await client.stashSave(normalizedWorkspaceId, {
-              branch: currentBranchName ?? undefined,
-            });
-            if (stashPayload.error) {
-              toast.error(stashPayload.error.message);
+      void (async () => {
+        if (!client) return;
+        try {
+          const payload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branchId);
+          if (payload.error) {
+            // If the error is about uncommitted changes, offer the stash dialog
+            if (payload.error.message.toLowerCase().includes("uncommitted")) {
+              await stashAndSwitch(branchId);
               return;
             }
-            // Invalidate so the checkout query sees clean state before switching
-            await invalidateStashAndCheckout();
-            switchBranchMutation.mutate(branchId);
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to stash changes");
+            toast.error(payload.error.message);
+            return;
           }
-        })();
-        return;
-      }
-
-      switchBranchMutation.mutate(branchId);
+          // Success — refresh and check for stashes on the target branch
+          await invalidateStashAndCheckout();
+          try {
+            const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
+            const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
+            if (targetStash) {
+              const shouldRestore = await confirmDialog({
+                title: "Restore stashed changes?",
+                message: "This branch has stashed changes from a previous session. Would you like to restore them?",
+                confirmLabel: "Restore",
+                cancelLabel: "Later",
+              });
+              if (shouldRestore) {
+                const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
+                if (popPayload.error) {
+                  toast.error(popPayload.error.message);
+                } else {
+                  toast.success("Stashed changes restored");
+                }
+                await invalidateStashAndCheckout();
+              }
+            }
+          } catch {
+            // Non-critical — user can still restore manually via stash indicator
+          }
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Failed to switch branch");
+        }
+      })();
     },
-    [
-      client,
-      currentBranchName,
-      hasUncommittedChanges,
-      normalizedWorkspaceId,
-      switchBranchMutation,
-      toast,
-    ],
+    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, stashAndSwitch, toast],
   );
 
   const mobileView = usePanelStore((state) => state.mobileView);
