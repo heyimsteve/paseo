@@ -834,11 +834,13 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     return stashListQuery.data.find((e) => e.branch === currentBranchName) ?? null;
   }, [currentBranchName, stashListQuery.data]);
 
-  const invalidateStashAndCheckout = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: stashListQueryKey });
-    void queryClient.invalidateQueries({
-      queryKey: checkoutStatusQueryKey(normalizedServerId, normalizedWorkspaceId),
-    });
+  const invalidateStashAndCheckout = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: stashListQueryKey }),
+      queryClient.invalidateQueries({
+        queryKey: checkoutStatusQueryKey(normalizedServerId, normalizedWorkspaceId),
+      }),
+    ]);
   }, [queryClient, stashListQueryKey, normalizedServerId, normalizedWorkspaceId]);
 
   const stashPopMutation = useMutation({
@@ -901,9 +903,9 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       return payload;
     },
     onSuccess: (_data, branch) => {
-      invalidateStashAndCheckout();
-      // After switching, check if the target branch has a Paseo stash
+      // After switching, refresh queries then check if the target branch has a Paseo stash
       void (async () => {
+        await invalidateStashAndCheckout();
         try {
           if (!client) return;
           const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
@@ -922,7 +924,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               } else {
                 toast.success("Stashed changes restored");
               }
-              invalidateStashAndCheckout();
+              await invalidateStashAndCheckout();
             }
           }
         } catch {
@@ -958,7 +960,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               toast.error(stashPayload.error.message);
               return;
             }
-            // Stash succeeded — now switch
+            // Invalidate so the checkout query sees clean state before switching
+            await invalidateStashAndCheckout();
             switchBranchMutation.mutate(branchId);
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to stash changes");
