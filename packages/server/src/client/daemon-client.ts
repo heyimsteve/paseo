@@ -33,6 +33,7 @@ import type {
   StashPopResponse,
   StashDropResponse,
   StashListResponse,
+  StashShowResponse,
   ValidateBranchResponse,
   BranchSuggestionsResponse,
   DirectorySuggestionsResponse,
@@ -227,6 +228,7 @@ type StashSavePayload = StashSaveResponse["payload"];
 type StashPopPayload = StashPopResponse["payload"];
 type StashDropPayload = StashDropResponse["payload"];
 type StashListPayload = StashListResponse["payload"];
+type StashShowPayload = StashShowResponse["payload"];
 type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
@@ -2466,6 +2468,23 @@ export class DaemonClient {
       },
       responseType: "stash_list_response",
       timeout: 10000,
+    });
+  }
+
+  async stashShow(
+    cwd: string,
+    stashIndex: number,
+    requestId?: string,
+  ): Promise<StashShowPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "stash_show_request",
+        cwd,
+        stashIndex,
+      },
+      responseType: "stash_show_response",
+      timeout: 30000,
     });
   }
 
