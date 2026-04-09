@@ -5,8 +5,10 @@ import {
   ActivityIndicator,
   BackHandler,
   Keyboard,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   View,
 } from "react-native";
@@ -20,8 +22,10 @@ import {
   Copy,
   Ellipsis,
   EllipsisVertical,
+  Eye,
   GitBranch,
   Package,
+  Trash2,
   PanelRight,
   RotateCw,
   SquarePen,
@@ -827,10 +831,33 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     staleTime: 30_000,
   });
 
+  const allStashes = stashListQuery.data ?? [];
+  const hasStashes = allStashes.length > 0;
+
   const currentBranchStash = useMemo<StashEntry | null>(() => {
     if (!currentBranchName || !stashListQuery.data) return null;
     return stashListQuery.data.find((e) => e.branch === currentBranchName) ?? null;
   }, [currentBranchName, stashListQuery.data]);
+
+  // Stash diff preview state
+  const [previewStashIndex, setPreviewStashIndex] = useState<number | null>(null);
+  const isStashPreviewOpen = previewStashIndex !== null;
+
+  const stashShowQuery = useQuery({
+    queryKey: ["stashShow", normalizedServerId, normalizedWorkspaceId, previewStashIndex],
+    queryFn: async () => {
+      if (!client || previewStashIndex === null) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.stashShow(normalizedWorkspaceId, previewStashIndex);
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload.files;
+    },
+    enabled: isStashPreviewOpen && Boolean(client) && isConnected,
+    staleTime: 60_000,
+  });
 
   const invalidateStashAndCheckout = useCallback(async () => {
     await Promise.all([
@@ -872,24 +899,6 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
       toast.error(error instanceof Error ? error.message : "Failed to discard stash");
     },
   });
-
-  const handleRestoreStash = useCallback(() => {
-    if (!currentBranchStash) return;
-    stashPopMutation.mutate(currentBranchStash.index);
-  }, [currentBranchStash, stashPopMutation]);
-
-  const handleDropStash = useCallback(async () => {
-    if (!currentBranchStash) return;
-    const confirmed = await confirmDialog({
-      title: "Discard stash?",
-      message: "The stashed changes will be permanently deleted.",
-      confirmLabel: "Discard",
-      destructive: true,
-    });
-    if (confirmed) {
-      stashDropMutation.mutate(currentBranchStash.index);
-    }
-  }, [currentBranchStash, stashDropMutation]);
 
   // ---- Branch switch with stash-awareness ----
 
@@ -2221,7 +2230,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                           {workspaceHeader.title}
                         </Text>
                       )}
-                      {currentBranchStash ? (
+                      {hasStashes ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger
                             testID="workspace-header-stash-trigger"
@@ -2230,7 +2239,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                               (hovered || pressed) && styles.stashIndicatorHovered,
                             ]}
                             accessibilityRole="button"
-                            accessibilityLabel="Stashed changes available"
+                            accessibilityLabel={`${allStashes.length} stashed change${allStashes.length === 1 ? "" : "s"}`}
                           >
                             {({ hovered }) => (
                               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -2246,31 +2255,66 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                                     />
                                   </View>
                                 </TooltipTrigger>
-                                <TooltipContent>Stashed changes</TooltipContent>
+                                <TooltipContent>
+                                  {allStashes.length} stash{allStashes.length === 1 ? "" : "es"}
+                                </TooltipContent>
                               </Tooltip>
                             )}
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start" width={200}>
-                            <DropdownMenuItem
-                              testID="workspace-header-stash-restore"
-                              leading={
-                                <Package size={14} color={theme.colors.foregroundMuted} />
-                              }
-                              onSelect={handleRestoreStash}
-                              disabled={stashPopMutation.isPending}
-                            >
-                              Restore stash
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              testID="workspace-header-stash-drop"
-                              leading={
-                                <X size={14} color={theme.colors.foregroundMuted} />
-                              }
-                              onSelect={handleDropStash}
-                              disabled={stashDropMutation.isPending}
-                            >
-                              Discard stash
-                            </DropdownMenuItem>
+                          <DropdownMenuContent align="start" width={300}>
+                            {allStashes.map((stash) => (
+                              <View key={stash.index}>
+                                <View style={styles.stashEntryHeader}>
+                                  <Text
+                                    style={styles.stashEntryBranch}
+                                    numberOfLines={1}
+                                  >
+                                    {stash.branch ?? "unnamed"}
+                                  </Text>
+                                </View>
+                                <DropdownMenuItem
+                                  leading={
+                                    <Eye size={14} color={theme.colors.foregroundMuted} />
+                                  }
+                                  onSelect={() => setPreviewStashIndex(stash.index)}
+                                >
+                                  Preview
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  leading={
+                                    <Package size={14} color={theme.colors.foregroundMuted} />
+                                  }
+                                  onSelect={() => stashPopMutation.mutate(stash.index)}
+                                  disabled={stashPopMutation.isPending}
+                                >
+                                  Restore
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  leading={
+                                    <Trash2 size={14} color={theme.colors.foregroundMuted} />
+                                  }
+                                  onSelect={() => {
+                                    void (async () => {
+                                      const confirmed = await confirmDialog({
+                                        title: "Discard stash?",
+                                        message: `The stashed changes for "${stash.branch ?? "unnamed"}" will be permanently deleted.`,
+                                        confirmLabel: "Discard",
+                                        destructive: true,
+                                      });
+                                      if (confirmed) {
+                                        stashDropMutation.mutate(stash.index);
+                                      }
+                                    })();
+                                  }}
+                                  disabled={stashDropMutation.isPending}
+                                >
+                                  Discard
+                                </DropdownMenuItem>
+                                {stash.index < allStashes[allStashes.length - 1]!.index ? (
+                                  <DropdownMenuSeparator />
+                                ) : null}
+                              </View>
+                            ))}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : null}
@@ -2574,6 +2618,141 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           />
         )}
       </View>
+      {isStashPreviewOpen ? (
+        <Modal
+          transparent
+          animationType="none"
+          visible
+          onRequestClose={() => setPreviewStashIndex(null)}
+        >
+          <Pressable
+            style={styles.stashPreviewBackdrop}
+            onPress={() => setPreviewStashIndex(null)}
+          />
+          <View style={styles.stashPreviewCard}>
+            <View style={styles.stashPreviewHeader}>
+              <Text style={styles.stashPreviewTitle} numberOfLines={1}>
+                Stash preview — {allStashes.find((s) => s.index === previewStashIndex)?.branch ?? "unnamed"}
+              </Text>
+              <Pressable
+                accessibilityLabel="Close"
+                style={styles.stashPreviewCloseButton}
+                onPress={() => setPreviewStashIndex(null)}
+              >
+                <X size={16} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.stashPreviewScroll}
+              contentContainerStyle={styles.stashPreviewScrollContent}
+            >
+              {stashShowQuery.isLoading ? (
+                <View style={styles.stashPreviewLoading}>
+                  <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+                  <Text style={styles.stashPreviewLoadingText}>Loading diff...</Text>
+                </View>
+              ) : stashShowQuery.isError ? (
+                <Text style={styles.stashPreviewErrorText}>
+                  Failed to load stash diff.
+                </Text>
+              ) : stashShowQuery.data && stashShowQuery.data.length > 0 ? (
+                stashShowQuery.data.map((file) => (
+                  <View key={file.path} style={styles.stashPreviewFile}>
+                    <View style={styles.stashPreviewFileHeader}>
+                      <Text style={styles.stashPreviewFilePath} numberOfLines={1}>
+                        {file.path}
+                      </Text>
+                      <Text style={styles.stashPreviewFileStats}>
+                        {file.additions > 0 ? (
+                          <Text style={{ color: theme.colors.palette.green[500] }}>
+                            +{file.additions}
+                          </Text>
+                        ) : null}
+                        {file.additions > 0 && file.deletions > 0 ? " " : null}
+                        {file.deletions > 0 ? (
+                          <Text style={{ color: theme.colors.palette.red[500] }}>
+                            -{file.deletions}
+                          </Text>
+                        ) : null}
+                      </Text>
+                    </View>
+                    {file.status === "binary" ? (
+                      <Text style={styles.stashPreviewBinaryLabel}>Binary file</Text>
+                    ) : file.status === "too_large" ? (
+                      <Text style={styles.stashPreviewBinaryLabel}>File too large to preview</Text>
+                    ) : (
+                      file.hunks.map((hunk, hunkIdx) => (
+                        <View key={hunkIdx} style={styles.stashPreviewHunk}>
+                          {hunk.lines.map((line, lineIdx) => (
+                            <Text
+                              key={lineIdx}
+                              style={[
+                                styles.stashPreviewLine,
+                                line.type === "add" && styles.stashPreviewLineAdd,
+                                line.type === "remove" && styles.stashPreviewLineRemove,
+                                line.type === "header" && styles.stashPreviewLineHeader,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {line.type === "add"
+                                ? "+"
+                                : line.type === "remove"
+                                  ? "-"
+                                  : " "}
+                              {line.content}
+                            </Text>
+                          ))}
+                        </View>
+                      ))
+                    )}
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.stashPreviewErrorText}>No changes in this stash.</Text>
+              )}
+            </ScrollView>
+            <View style={styles.stashPreviewActions}>
+              <Pressable
+                style={({ hovered }) => [
+                  styles.stashPreviewActionButton,
+                  hovered && styles.stashPreviewActionButtonHovered,
+                ]}
+                onPress={() => {
+                  stashPopMutation.mutate(previewStashIndex);
+                  setPreviewStashIndex(null);
+                }}
+              >
+                <Text style={styles.stashPreviewActionText}>Restore</Text>
+              </Pressable>
+              <Pressable
+                style={({ hovered }) => [
+                  styles.stashPreviewActionButton,
+                  styles.stashPreviewActionButtonDestructive,
+                  hovered && styles.stashPreviewActionButtonDestructiveHovered,
+                ]}
+                onPress={() => {
+                  void (async () => {
+                    const confirmed = await confirmDialog({
+                      title: "Discard stash?",
+                      message: "The stashed changes will be permanently deleted.",
+                      confirmLabel: "Discard",
+                      destructive: true,
+                    });
+                    if (confirmed) {
+                      stashDropMutation.mutate(previewStashIndex);
+                      setPreviewStashIndex(null);
+                    }
+                  })();
+                }}
+              >
+                <Text style={[styles.stashPreviewActionText, styles.stashPreviewActionTextDestructive]}>
+                  Discard
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </View>
   );
 }
@@ -2667,6 +2846,171 @@ const styles = StyleSheet.create((theme) => ({
   stashIndicatorInner: {
     alignItems: "center",
     justifyContent: "center",
+  },
+  stashEntryHeader: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    paddingTop: theme.spacing[2],
+  },
+  stashEntryBranch: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
+  },
+  stashPreviewBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  stashPreviewCard: {
+    position: "absolute",
+    top: "5%",
+    left: "10%",
+    right: "10%",
+    bottom: "5%",
+    backgroundColor: theme.colors.surface0,
+    borderRadius: theme.borderRadius.xl,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+    ...theme.shadow.lg,
+  },
+  stashPreviewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  stashPreviewTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+    flex: 1,
+  },
+  stashPreviewCloseButton: {
+    padding: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+  },
+  stashPreviewScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  stashPreviewScrollContent: {
+    padding: theme.spacing[3],
+    gap: theme.spacing[3],
+  },
+  stashPreviewLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    padding: theme.spacing[6],
+  },
+  stashPreviewLoadingText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
+  stashPreviewErrorText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    padding: theme.spacing[4],
+    textAlign: "center",
+  },
+  stashPreviewFile: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    overflow: "hidden",
+  },
+  stashPreviewFileHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  stashPreviewFilePath: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.mono,
+    flex: 1,
+  },
+  stashPreviewFileStats: {
+    fontSize: theme.fontSize.xs,
+    fontFamily: theme.fontFamily.mono,
+    marginLeft: theme.spacing[2],
+  },
+  stashPreviewBinaryLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    padding: theme.spacing[3],
+    fontStyle: "italic",
+  },
+  stashPreviewHunk: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  stashPreviewLine: {
+    fontSize: theme.fontSize.xs,
+    fontFamily: theme.fontFamily.mono,
+    color: theme.colors.foreground,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 1,
+  },
+  stashPreviewLineAdd: {
+    backgroundColor: "rgba(34,197,94,0.12)",
+    color: theme.colors.palette.green[400],
+  },
+  stashPreviewLineRemove: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+    color: theme.colors.palette.red[400],
+  },
+  stashPreviewLineHeader: {
+    color: theme.colors.foregroundMuted,
+    backgroundColor: theme.colors.surface1,
+    fontStyle: "italic",
+  },
+  stashPreviewActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  stashPreviewActionButton: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface1,
+  },
+  stashPreviewActionButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  stashPreviewActionButtonDestructive: {
+    backgroundColor: "transparent",
+  },
+  stashPreviewActionButtonDestructiveHovered: {
+    backgroundColor: "rgba(239,68,68,0.1)",
+  },
+  stashPreviewActionText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  stashPreviewActionTextDestructive: {
+    color: theme.colors.palette.red[500],
   },
   sourceControlButton: {
     flexDirection: "row",

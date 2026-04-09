@@ -1096,6 +1096,13 @@ export const StashListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const StashShowRequestSchema = z.object({
+  type: z.literal("stash_show_request"),
+  cwd: z.string(),
+  stashIndex: z.number().int().min(0),
+  requestId: z.string(),
+});
+
 export const BranchSuggestionsRequestSchema = z.object({
   type: z.literal("branch_suggestions_request"),
   cwd: z.string(),
@@ -1436,6 +1443,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   StashPopRequestSchema,
   StashDropRequestSchema,
   StashListRequestSchema,
+  StashShowRequestSchema,
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
   DirectorySuggestionsRequestSchema,
@@ -2294,6 +2302,17 @@ export const StashListResponseSchema = z.object({
   }),
 });
 
+export const StashShowResponseSchema = z.object({
+  type: z.literal("stash_show_response"),
+  payload: z.object({
+    cwd: z.string(),
+    stashIndex: z.number(),
+    files: z.array(ParsedDiffFileSchema),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const ValidateBranchResponseSchema = z.object({
   type: z.literal("validate_branch_response"),
   payload: z.object({
@@ -2685,6 +2704,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   StashPopResponseSchema,
   StashDropResponseSchema,
   StashListResponseSchema,
+  StashShowResponseSchema,
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
   DirectorySuggestionsResponseSchema,
@@ -2910,6 +2930,8 @@ export type StashDropRequest = z.infer<typeof StashDropRequestSchema>;
 export type StashDropResponse = z.infer<typeof StashDropResponseSchema>;
 export type StashListRequest = z.infer<typeof StashListRequestSchema>;
 export type StashListResponse = z.infer<typeof StashListResponseSchema>;
+export type StashShowRequest = z.infer<typeof StashShowRequestSchema>;
+export type StashShowResponse = z.infer<typeof StashShowResponseSchema>;
 export type StashEntry = z.infer<typeof StashEntrySchema>;
 export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
